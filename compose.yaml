@@ -1,0 +1,179 @@
+# -----------------------------------
+# Refer to your cluster documentation or platform-specific instructions for configuring CRI-O as the container runtime.
+# Example (kubeadm):
+# kubeadm init --cri-socket /var/run/crio/crio.sock
+
+# -----------------------------------
+# Secrets Management (Helm)
+# -----------------------------------
+# Install Helm for managing Secrets:
+# https://helm.sh/docs/intro/install/
+
+version: "3.9"
+
+services:
+  # Control Plane
+  etcd:
+    image: quay.io/coreos/etcd:latest
+    volumes:
+      - etcd-data:/var/lib/etcd
+    deploy:
+      replicas: 3
+      restart: always
+      placement:
+        constraints:
+          kubernetes.io/schedulable: "true"
+
+  kube-apiserver:
+    image: quay.io/kubernetes/kube-apiserver:v1.24.4
+    volumes:
+      - kubernetes-config:/etc/kubernetes
+    depends_on:
+      - etcd
+    deploy:
+      replicas: 1
+      restart: always
+      placement:
+        constraints:
+          kubernetes.io/schedulable: "true"
+
+  kube-controller-manager:
+    image: quay.io/kubernetes/kube-controller-manager:v1.24.4
+    volumes:
+      - kubernetes-config:/etc/kubernetes
+    depends_on:
+      - kube-apiserver
+    deploy:
+      replicas: 1
+      restart: always
+      placement:
+        constraints:
+          kubernetes.io/schedulable: "true"
+
+  kube-scheduler:
+    image: quay.io/kubernetes/kube-scheduler:v1.24.4
+    volumes:
+      - kubernetes-config:/etc/kubernetes
+    depends_on:
+      - kube-apiserver
+    deploy:
+      replicas: 1
+      restart: always
+      placement:
+        constraints:
+          kubernetes.io/schedulable: "true"
+
+  # Workers
+  # Update the number of workers based on your needs and resources
+  worker-1:
+    image: ubuntu:latest
+    deploy:
+      replicas: 3
+      restart: always
+      placement:
+        constraints:
+          kubernetes.io/schedulable: "true"
+
+  worker-2:
+    image: ubuntu:latest
+    deploy:
+      replicas: 3
+      restart: always
+      placement:
+        constraints:
+          kubernetes.io/schedulable: "true"
+
+  # Pods
+  msmgo:
+    image: my_private_registry/msmongodb:latest
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME={{ .Values.mongodb.username }}  # Reference a Helm Secret
+      - MONGO_INITDB_ROOT_PASSWORD={{ .Values.mongodb.password }}  # Reference a Helm Secret
+    volumes:
+      - mongodb-data:/data/db
+    ports:
+      - "0-0:27017" # Expose port internally only
+    deploy:
+      replicas: 1
+
+  frontend:
+    image: my_private_registry/frontend:latest
+    volumes:
+      - frontend-workspace:/workspace
+    ports:
+      - "50000:50000"
+    deploy:
+      replicas: 1
+
+  gptpilot:
+    image: my_private_registry/gptpilot:latest
+    environment:
+      - OPENAI_API_KEY={{ .Values.gptpilot.openai_token }}  # Reference a Helm Secret
+    volumes:
+      - gptpilot-maintaince:/maintaince
+    ports:
+      - "50505:50505" # Adjust if gptpilot exposes a different port
+    deploy:
+      replicas: 1
+
+  # Service Plane
+  nginx-ingress:
+    image: nginx:stable-alpine
+    depends_on:
+      - frontend
+      - gptpilot
+    ports:
+      - "80:80"
+      - "443:443"
+    deploy:
+      replicas: 1
+
+  # Cluster Networking and DNS
+  kube-dns:
+    image: quay.io/coreos/kube-dns:v1.24.4
+    deploy:
+      replicas: 1
+
+# Volumes
+volumes:
+  etcd-data: {}
+  kubernetes-config: {}
+  mongodb-data: {}
+  frontend-workspace: {}
+  gptpilot-maintaince: {}
+
+# Persistent Storage (Customize based on your needs)
+# ...
+
+# Services
+services:
+  frontend-service:
+    type: LoadBalancer
+    ports:
+      - port: 80
+        targetPort: 50000
+    selector:
+      app: frontend
+
+  gptpilot-service:
+    type: LoadBalancer
+    ports:
+      - port: 80
+        targetPort: 50505 # Adjust if gptpilot
+
+services:
+  # ... (rest of the services)
+
+  # Pods with Secrets placeholders
+  msmgo:
+    image: my_private_registry/msmongodb:latest
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME={{ .Values.mongodb.username }}  # Reference a Helm Secret
+      - MONGO_INITDB_ROOT_PASSWORD={{ .Values.mongodb.password }}  # Reference a Helm Secret
+    # ...
+
+  gptpilot:
+    image: my_private_registry/gptpilot:latest
+    environment:
+      - OPENAI_API_KEY={{ .Values.gptpilot.openai_token }}  # Reference a Helm Secret
+    # ...
